@@ -127,8 +127,8 @@ public class SnapshotVideoRecorder extends VideoRecorder implements RendererFram
     @RendererThread
     @Override
     public void onRendererFrame(@NonNull SurfaceTexture surfaceTexture,
-                                float scaleX,
-                                float scaleY) {
+                                final int outputTextureId,
+                                float scaleX, float scaleY) {
         if (mCurrentState == STATE_NOT_RECORDING && mDesiredState == STATE_RECORDING) {
             LOG.i("Starting the encoder engine.");
 
@@ -235,6 +235,7 @@ public class SnapshotVideoRecorder extends VideoRecorder implements RendererFram
             TextureMediaEncoder textureEncoder
                     = (TextureMediaEncoder) mEncoderEngine.getVideoEncoder();
             TextureMediaEncoder.Frame frame = textureEncoder.acquireFrame();
+            frame.outputTextureId = outputTextureId;
             frame.timestampNanos = surfaceTexture.getTimestamp();
             // NOTE: this is an approximation but it seems to work:
             frame.timestampMillis = System.currentTimeMillis();

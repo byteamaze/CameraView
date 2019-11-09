@@ -8,32 +8,31 @@ import android.opengl.EGL14;
 import android.opengl.EGLContext;
 import android.opengl.Matrix;
 import android.os.Build;
-
-import com.otaliastudios.cameraview.CameraLogger;
-import com.otaliastudios.cameraview.PictureResult;
-import com.otaliastudios.cameraview.internal.egl.EglBaseSurface;
-import com.otaliastudios.cameraview.overlay.Overlay;
-import com.otaliastudios.cameraview.controls.Facing;
-import com.otaliastudios.cameraview.engine.CameraEngine;
-import com.otaliastudios.cameraview.engine.offset.Axis;
-import com.otaliastudios.cameraview.engine.offset.Reference;
-import com.otaliastudios.cameraview.internal.egl.EglCore;
-import com.otaliastudios.cameraview.internal.egl.EglViewport;
-import com.otaliastudios.cameraview.internal.egl.EglWindowSurface;
-import com.otaliastudios.cameraview.internal.utils.CropHelper;
-import com.otaliastudios.cameraview.internal.utils.WorkerHandler;
-import com.otaliastudios.cameraview.overlay.OverlayDrawer;
-import com.otaliastudios.cameraview.preview.GlCameraPreview;
-import com.otaliastudios.cameraview.preview.RendererFrameCallback;
-import com.otaliastudios.cameraview.preview.RendererThread;
-import com.otaliastudios.cameraview.filter.Filter;
-import com.otaliastudios.cameraview.size.AspectRatio;
-import com.otaliastudios.cameraview.size.Size;
+import android.view.Surface;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.WorkerThread;
 
-import android.view.Surface;
+import com.otaliastudios.cameraview.CameraLogger;
+import com.otaliastudios.cameraview.PictureResult;
+import com.otaliastudios.cameraview.controls.Facing;
+import com.otaliastudios.cameraview.engine.CameraEngine;
+import com.otaliastudios.cameraview.engine.offset.Axis;
+import com.otaliastudios.cameraview.engine.offset.Reference;
+import com.otaliastudios.cameraview.filter.Filter;
+import com.otaliastudios.cameraview.filter.GlDisplayFilter;
+import com.otaliastudios.cameraview.internal.egl.EglBaseSurface;
+import com.otaliastudios.cameraview.internal.egl.EglCore;
+import com.otaliastudios.cameraview.internal.egl.EglWindowSurface;
+import com.otaliastudios.cameraview.internal.utils.CropHelper;
+import com.otaliastudios.cameraview.internal.utils.WorkerHandler;
+import com.otaliastudios.cameraview.overlay.Overlay;
+import com.otaliastudios.cameraview.overlay.OverlayDrawer;
+import com.otaliastudios.cameraview.preview.GlCameraPreview;
+import com.otaliastudios.cameraview.preview.RendererFrameCallback;
+import com.otaliastudios.cameraview.preview.RendererThread;
+import com.otaliastudios.cameraview.size.AspectRatio;
+import com.otaliastudios.cameraview.size.Size;
 
 /**
  * API 19.
@@ -71,7 +70,7 @@ public class SnapshotGlPictureRecorder extends PictureRecorder {
     private float[] mTransform;
 
 
-    private EglViewport mViewport;
+    private Filter mDisplayFilter;
 
     public SnapshotGlPictureRecorder(
             @NonNull PictureResult.Stub stub,
@@ -105,10 +104,10 @@ public class SnapshotGlPictureRecorder extends PictureRecorder {
             @RendererThread
             @Override
             public void onRendererFrame(@NonNull SurfaceTexture surfaceTexture,
-                                        final float scaleX,
-                                        final float scaleY) {
+                                        final int outputTextureId,
+                                        final float scaleX, final float scaleY) {
                 mPreview.removeRendererFrameCallback(this);
-                SnapshotGlPictureRecorder.this.onRendererFrame(surfaceTexture, scaleX, scaleY);
+                SnapshotGlPictureRecorder.this.onRendererFrame(surfaceTexture, outputTextureId, scaleX, scaleY);
             }
 
         });
@@ -119,7 +118,7 @@ public class SnapshotGlPictureRecorder extends PictureRecorder {
     @TargetApi(Build.VERSION_CODES.KITKAT)
     protected void onRendererTextureCreated(int textureId) {
         mTextureId = textureId;
-        mViewport = new EglViewport();
+        mDisplayFilter = new GlDisplayFilter();
         // Need to crop the size.
         Rect crop = CropHelper.computeCrop(mResult.size, mOutputRatio);
         mResult.size = new Size(crop.width(), crop.height());
@@ -135,15 +134,14 @@ public class SnapshotGlPictureRecorder extends PictureRecorder {
     @RendererThread
     @TargetApi(Build.VERSION_CODES.KITKAT)
     protected void onRendererFilterChanged(@NonNull Filter filter) {
-        mViewport.setFilter(filter.copy());
+        mDisplayFilter.setSize(filter.getSize().getWidth(), filter.getSize().getHeight());
     }
 
     @SuppressWarnings("WeakerAccess")
     @RendererThread
     @TargetApi(Build.VERSION_CODES.KITKAT)
     protected void onRendererFrame(@SuppressWarnings("unused") @NonNull final SurfaceTexture surfaceTexture,
-                                 final float scaleX,
-                                 final float scaleY) {
+                                   final int outputTextureId, final float scaleX, final float scaleY) {
         // Get egl context from the RendererThread, which is the one in which we have created
         // the textureId and the overlayTextureId, managed by the GlSurfaceView.
         // Next operations can then be performed on different threads using this handle.
@@ -153,7 +151,7 @@ public class SnapshotGlPictureRecorder extends PictureRecorder {
         WorkerHandler.execute(new Runnable() {
             @Override
             public void run() {
-                takeFrame(surfaceTexture, scaleX, scaleY, eglContext);
+                takeFrame(surfaceTexture, outputTextureId, scaleX, scaleY, eglContext);
 
             }
         });
@@ -186,10 +184,8 @@ public class SnapshotGlPictureRecorder extends PictureRecorder {
     @WorkerThread
     @TargetApi(Build.VERSION_CODES.KITKAT)
     protected void takeFrame(@NonNull SurfaceTexture surfaceTexture,
-                             float scaleX,
-                             float scaleY,
+                             int outputTextureId, float scaleX, float scaleY,
                              @NonNull EGLContext eglContext) {
-
         // 0. EGL window will need an output.
         // We create a fake one as explained in javadocs.
         final int fakeOutputTextureId = 9999;
@@ -236,14 +232,14 @@ public class SnapshotGlPictureRecorder extends PictureRecorder {
         // 5. Draw and save
         long timestampUs = surfaceTexture.getTimestamp() / 1000L;
         LOG.i("takeFrame:", "timestampUs:", timestampUs);
-        mViewport.drawFrame(timestampUs, mTextureId, mTransform);
+        mDisplayFilter.drawFrame(outputTextureId, timestampUs, mTransform);
         if (mHasOverlay) mOverlayDrawer.render(timestampUs);
         mResult.format = PictureResult.FORMAT_JPEG;
         mResult.data = eglSurface.saveFrameTo(Bitmap.CompressFormat.JPEG);
 
         // 6. Cleanup
         eglSurface.releaseEglSurface();
-        mViewport.release();
+        mDisplayFilter.onDestroy();
         fakeOutputSurface.release();
         if (mHasOverlay) mOverlayDrawer.release();
         core.release();

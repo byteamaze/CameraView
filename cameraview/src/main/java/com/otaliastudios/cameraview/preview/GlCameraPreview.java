@@ -4,19 +4,19 @@ import android.content.Context;
 import android.graphics.SurfaceTexture;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
-import androidx.annotation.NonNull;
-import androidx.annotation.VisibleForTesting;
-
 import android.view.LayoutInflater;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
+
 import com.otaliastudios.cameraview.R;
-import com.otaliastudios.cameraview.internal.egl.EglViewport;
-import com.otaliastudios.cameraview.internal.utils.Op;
 import com.otaliastudios.cameraview.filter.Filter;
 import com.otaliastudios.cameraview.filter.NoFilter;
+import com.otaliastudios.cameraview.internal.egl.EglViewport;
+import com.otaliastudios.cameraview.internal.utils.Op;
 import com.otaliastudios.cameraview.size.AspectRatio;
 
 import java.util.Set;
@@ -231,10 +231,11 @@ public class GlCameraPreview extends FilterCameraPreview<GLSurfaceView, SurfaceT
                 Matrix.translateM(mTransformMatrix, 0, translX, translY, 0);
                 Matrix.scaleM(mTransformMatrix, 0, mCropScaleX, mCropScaleY, 1);
             }
-            mOutputViewport.drawFrame(mInputSurfaceTexture.getTimestamp() / 1000L,
-                    mOutputTextureId, mTransformMatrix);
+            long timeUs = mInputSurfaceTexture.getTimestamp() / 1000L;
+            int finalOutputTextureId = mOutputViewport.drawFrame(
+                    mOutputTextureId, timeUs, mTransformMatrix);
             for (RendererFrameCallback callback : mRendererFrameCallbacks) {
-                callback.onRendererFrame(mInputSurfaceTexture, mCropScaleX, mCropScaleY);
+                callback.onRendererFrame(mInputSurfaceTexture, finalOutputTextureId, mCropScaleX, mCropScaleY);
             }
         }
     }

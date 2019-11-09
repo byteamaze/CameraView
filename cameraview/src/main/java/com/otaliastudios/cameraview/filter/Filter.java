@@ -1,8 +1,9 @@
 package com.otaliastudios.cameraview.filter;
 
-import com.otaliastudios.cameraview.CameraView;
-
 import androidx.annotation.NonNull;
+
+import com.otaliastudios.cameraview.CameraView;
+import com.otaliastudios.cameraview.size.Size;
 
 import java.io.File;
 
@@ -28,7 +29,6 @@ import java.io.File;
  * map the filter parameter to gestures.
  */
 public interface Filter {
-
     /**
      * Returns a String containing the vertex shader.
      * Together with {@link #getFragmentShader()}, this will be used to
@@ -64,13 +64,22 @@ public interface Filter {
     void onDestroy();
 
     /**
-     * Called to render the actual texture. The given transformation matrix
+     * Called to render the own texture. The given transformation matrix
      * should be applied.
+     *
+     * @param textureId input textureId
+     * @param timestampUs timestamp in microseconds
+     * @param transformMatrix matrix
+     */
+    int drawFrameBuffer(int textureId, long timestampUs, float[] transformMatrix);
+
+    /**
+     * Called to render the final output texture.
      *
      * @param timestampUs timestamp in microseconds
      * @param transformMatrix matrix
      */
-    void draw(long timestampUs, float[] transformMatrix);
+    void drawFrame(int textureId, long timestampUs, float[] transformMatrix);
 
     /**
      * Called anytime the output size changes.
@@ -79,6 +88,12 @@ public interface Filter {
      * @param height height
      */
     void setSize(int width, int height);
+
+    /**
+     * get current output size
+     * @return
+     */
+    Size getSize();
 
     /**
      * Clones this filter creating a new instance of it.

@@ -10,8 +10,8 @@ import androidx.annotation.RequiresApi;
 
 import com.otaliastudios.cameraview.CameraLogger;
 import com.otaliastudios.cameraview.filter.Filter;
+import com.otaliastudios.cameraview.filter.GlDisplayFilter;
 import com.otaliastudios.cameraview.internal.egl.EglCore;
-import com.otaliastudios.cameraview.internal.egl.EglViewport;
 import com.otaliastudios.cameraview.internal.egl.EglWindowSurface;
 import com.otaliastudios.cameraview.internal.utils.Pool;
 
@@ -30,7 +30,7 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
     private int mTransformRotation;
     private EglCore mEglCore;
     private EglWindowSurface mWindow;
-    private EglViewport mViewport;
+    private Filter mGlDisplayFilter;
     private Pool<Frame> mFramePool = new Pool<>(Integer.MAX_VALUE, new Pool.Factory<Frame>() {
         @Override
         public Frame create() {
@@ -68,6 +68,8 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
          */
         public float[] transform = new float[16];
 
+        public int outputTextureId = -1;
+
         private long timestampUs() {
             return timestampNanos / 1000L;
         }
@@ -99,7 +101,7 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
         mEglCore = new EglCore(mConfig.eglContext, EglCore.FLAG_RECORDABLE);
         mWindow = new EglWindowSurface(mEglCore, mSurface, true);
         mWindow.makeCurrent();
-        mViewport = new EglViewport();
+        mGlDisplayFilter = new GlDisplayFilter();
     }
 
     /**
@@ -148,7 +150,7 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
     }
 
     private void onFilter(@NonNull Filter filter) {
-        mViewport.setFilter(filter);
+        mGlDisplayFilter.setSize(filter.getSize().getWidth(), filter.getSize().getHeight());
     }
 
     private void onFrame(@NonNull Frame frame) {
@@ -175,7 +177,6 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
                 notifyMaxLengthReached();
             }
         }
-
         // First, drain any previous data.
         LOG.v("onEvent -",
                 "frameNumber:", mFrameNumber,
@@ -188,7 +189,6 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
                 "frameNumber:", mFrameNumber,
                 "timestampUs:", frame.timestampUs(),
                 "- rendering.");
-
         // 1. We must scale this matrix like GlCameraPreview does, because it might have some
         // cropping. Scaling takes place with respect to the (0, 0, 0) point, so we must apply
         // a Translation to compensate.
@@ -218,7 +218,8 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
             Matrix.translateM(mConfig.overlayDrawer.getTransform(),
                     0, -0.5F, -0.5F, 0);
         }
-        mViewport.drawFrame(frame.timestampUs(), mConfig.textureId, transform);
+        mGlDisplayFilter.drawFrame(frame.outputTextureId,
+                frame.timestampUs(), transform);
         if (mConfig.hasOverlay()) {
             mConfig.overlayDrawer.render(frame.timestampUs());
         }
@@ -235,9 +236,9 @@ public class TextureMediaEncoder extends VideoMediaEncoder<TextureConfig> {
             mWindow.release();
             mWindow = null;
         }
-        if (mViewport != null) {
-            mViewport.release();
-            mViewport = null;
+        if (mGlDisplayFilter != null) {
+            mGlDisplayFilter.onDestroy();
+            mGlDisplayFilter = null;
         }
         if (mEglCore != null) {
             mEglCore.release();

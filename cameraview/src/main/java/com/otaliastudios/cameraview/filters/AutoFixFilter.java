@@ -117,8 +117,8 @@ public class AutoFixFilter extends BaseFilter implements OneParameterFilter {
     }
 
     @Override
-    protected void onPreDraw(long timestampUs, float[] transformMatrix) {
-        super.onPreDraw(timestampUs, transformMatrix);
+    public void onPreDraw(int textureId, long timestampUs, float[] transformMatrix) {
+        super.onPreDraw(textureId, timestampUs, transformMatrix);
         GLES20.glUniform1f(scaleLocation, scale);
         GlUtils.checkError("glUniform1f");
     }

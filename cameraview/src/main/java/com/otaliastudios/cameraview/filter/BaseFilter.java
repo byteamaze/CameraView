@@ -1,9 +1,9 @@
 package com.otaliastudios.cameraview.filter;
 
 import android.opengl.GLES20;
+import android.opengl.GLES30;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.VisibleForTesting;
 
 import com.otaliastudios.cameraview.CameraLogger;
 import com.otaliastudios.cameraview.internal.GlUtils;
@@ -38,7 +38,6 @@ import java.nio.FloatBuffer;
  * and it must be specified in the fragment shader as a samplerExternalOES texture.
  * You also have to explicitly require the extension: see
  * {@link #createDefaultFragmentShader(String)}.
- *
  */
 public abstract class BaseFilter implements Filter {
 
@@ -51,30 +50,19 @@ public abstract class BaseFilter implements Filter {
     @SuppressWarnings("WeakerAccess")
     protected final static String DEFAULT_VERTEX_TEXTURE_COORDINATE_NAME = "aTextureCoord";
 
-    @SuppressWarnings("WeakerAccess")
-    protected final static String DEFAULT_VERTEX_MVP_MATRIX_NAME = "uMVPMatrix";
-
-    @SuppressWarnings("WeakerAccess")
-    protected final static String DEFAULT_VERTEX_TRANSFORM_MATRIX_NAME = "uTexMatrix";
     protected final static String DEFAULT_FRAGMENT_TEXTURE_COORDINATE_NAME = "vTextureCoord";
 
     @NonNull
     private static String createDefaultVertexShader(
             @NonNull String vertexPositionName,
             @NonNull String vertexTextureCoordinateName,
-            @NonNull String vertexModelViewProjectionMatrixName,
-            @NonNull String vertexTransformMatrixName,
             @NonNull String fragmentTextureCoordinateName) {
-        return "uniform mat4 "+vertexModelViewProjectionMatrixName+";\n"
-                + "uniform mat4 "+vertexTransformMatrixName+";\n"
-                + "attribute vec4 "+vertexPositionName+";\n"
-                + "attribute vec4 "+vertexTextureCoordinateName+";\n"
-                + "varying vec2 "+fragmentTextureCoordinateName+";\n"
+        return "attribute vec4 " + vertexPositionName + ";\n"
+                + "attribute vec4 " + vertexTextureCoordinateName + ";\n"
+                + "varying vec2 " + fragmentTextureCoordinateName + ";\n"
                 + "void main() {\n"
-                + "    gl_Position = " +vertexModelViewProjectionMatrixName+" * "
-                + vertexPositionName+";\n"
-                + "    "+fragmentTextureCoordinateName+" = ("+vertexTransformMatrixName+" * "
-                + vertexTextureCoordinateName+").xy;\n"
+                + "    gl_Position = " + vertexPositionName + ";\n"
+                + "    " + fragmentTextureCoordinateName + " = " + vertexTextureCoordinateName + ".xy;\n"
                 + "}\n";
     }
 
@@ -83,10 +71,10 @@ public abstract class BaseFilter implements Filter {
             @NonNull String fragmentTextureCoordinateName) {
         return "#extension GL_OES_EGL_image_external : require\n"
                 + "precision mediump float;\n"
-                + "varying vec2 "+fragmentTextureCoordinateName+";\n"
-                + "uniform samplerExternalOES sTexture;\n"
+                + "varying vec2 " + fragmentTextureCoordinateName + ";\n"
+                + "uniform sampler2D sTexture;\n"
                 + "void main() {\n"
-                + "  gl_FragColor = texture2D(sTexture, "+fragmentTextureCoordinateName+");\n"
+                + "  gl_FragColor = texture2D(sTexture, " + fragmentTextureCoordinateName + ");\n"
                 + "}\n";
     }
 
@@ -105,21 +93,18 @@ public abstract class BaseFilter implements Filter {
             1.0f, 1.0f  // 3 top right
     });
 
-    private int vertexModelViewProjectionMatrixLocation = -1;
-    private int vertexTransformMatrixLocation = -1;
     private int vertexPositionLocation = -1;
     private int vertexTextureCoordinateLocation = -1;
-    @VisibleForTesting int programHandle = -1;
-    @VisibleForTesting Size size;
+    private int programHandle = -1;
+    private Size size;
+
+    private int[] mFrameBuffers;
+    private int[] mFrameBufferTextures;
 
     @SuppressWarnings("WeakerAccess")
     protected String vertexPositionName = DEFAULT_VERTEX_POSITION_NAME;
     @SuppressWarnings("WeakerAccess")
     protected String vertexTextureCoordinateName = DEFAULT_VERTEX_TEXTURE_COORDINATE_NAME;
-    @SuppressWarnings("WeakerAccess")
-    protected String vertexModelViewProjectionMatrixName = DEFAULT_VERTEX_MVP_MATRIX_NAME;
-    @SuppressWarnings("WeakerAccess")
-    protected String vertexTransformMatrixName = DEFAULT_VERTEX_TRANSFORM_MATRIX_NAME;
     @SuppressWarnings({"unused", "WeakerAccess"})
     protected String fragmentTextureCoordinateName = DEFAULT_FRAGMENT_TEXTURE_COORDINATE_NAME;
 
@@ -128,8 +113,6 @@ public abstract class BaseFilter implements Filter {
     protected String createDefaultVertexShader() {
         return createDefaultVertexShader(vertexPositionName,
                 vertexTextureCoordinateName,
-                vertexModelViewProjectionMatrixName,
-                vertexTransformMatrixName,
                 fragmentTextureCoordinateName);
     }
 
@@ -144,25 +127,31 @@ public abstract class BaseFilter implements Filter {
         this.programHandle = programHandle;
         vertexPositionLocation = GLES20.glGetAttribLocation(programHandle, vertexPositionName);
         GlUtils.checkLocation(vertexPositionLocation, vertexPositionName);
-        vertexTextureCoordinateLocation = GLES20.glGetAttribLocation(programHandle,
-                vertexTextureCoordinateName);
+        vertexTextureCoordinateLocation = GLES20.glGetAttribLocation(programHandle, vertexTextureCoordinateName);
         GlUtils.checkLocation(vertexTextureCoordinateLocation, vertexTextureCoordinateName);
-        vertexModelViewProjectionMatrixLocation = GLES20.glGetUniformLocation(programHandle,
-                vertexModelViewProjectionMatrixName);
-        GlUtils.checkLocation(vertexModelViewProjectionMatrixLocation,
-                vertexModelViewProjectionMatrixName);
-        vertexTransformMatrixLocation = GLES20.glGetUniformLocation(programHandle,
-                vertexTransformMatrixName);
-        GlUtils.checkLocation(vertexTransformMatrixLocation, vertexTransformMatrixName);
     }
 
     @Override
     public void onDestroy() {
-        programHandle = -1;
+        if (programHandle != -1) {
+            GLES20.glDeleteProgram(programHandle);
+            programHandle = -1;
+        }
+        destroyFrameBuffer();
         vertexPositionLocation = -1;
         vertexTextureCoordinateLocation = -1;
-        vertexModelViewProjectionMatrixLocation = -1;
-        vertexTransformMatrixLocation = -1;
+    }
+
+    private void destroyFrameBuffer() {
+        //noinspection ConstantConditions
+        if (mFrameBuffers != null) {
+            GLES20.glDeleteFramebuffers(1, mFrameBuffers, 0);
+            mFrameBuffers = null;
+        }
+        if (mFrameBufferTextures != null) {
+            GLES20.glDeleteTextures(1, mFrameBufferTextures, 0);
+            mFrameBufferTextures = null;
+        }
     }
 
     @NonNull
@@ -173,32 +162,84 @@ public abstract class BaseFilter implements Filter {
 
     @Override
     public void setSize(int width, int height) {
+        if (size != null && size.getWidth() == width && size.getHeight() == height) return;
         size = new Size(width, height);
     }
 
     @Override
-    public void draw(long timestampUs, float[] transformMatrix) {
+    public Size getSize() {
+        return size;
+    }
+
+    @Override
+    public void drawFrame(int textureId, long timestampUs, float[] transformMatrix) {
+    }
+
+    @Override
+    public int drawFrameBuffer(int textureId, long timestampUs, float[] transformMatrix) {
+        maybeCreateProgramHandle();
+        maybeCreateFramebuffer(getSize().getWidth(), getSize().getHeight());
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFrameBuffers[0]);
+        GLES20.glUseProgram(programHandle);
+        drawTexture(textureId, timestampUs, transformMatrix);
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+        return mFrameBufferTextures[0];
+    }
+
+    @SuppressWarnings("WeakerAccess")
+    protected void drawTexture(int textureId, long timestampUs, float[] transformMatrix) {
         if (programHandle == -1) {
             LOG.w("Filter.draw() called after destroying the filter. " +
                     "This can happen rarely because of threading.");
         } else {
-            onPreDraw(timestampUs, transformMatrix);
+            onPreDraw(textureId, timestampUs, transformMatrix);
             onDraw(timestampUs);
             onPostDraw(timestampUs);
         }
     }
 
-    protected void onPreDraw(long timestampUs, float[] transformMatrix) {
-        // Copy the model / view / projection matrix over.
-        GLES20.glUniformMatrix4fv(vertexModelViewProjectionMatrixLocation, 1,
-                false, GlUtils.IDENTITY_MATRIX, 0);
-        GlUtils.checkError("glUniformMatrix4fv");
+    @SuppressWarnings("WeakerAccess")
+    protected int maybeCreateProgramHandle() {
+        if (programHandle == -1)
+            onCreate(GlUtils.createProgram(getVertexShader(), getFragmentShader()));
+        return programHandle;
+    }
 
-        // Copy the texture transformation matrix over.
-        GLES20.glUniformMatrix4fv(vertexTransformMatrixLocation, 1,
-                false, transformMatrix, 0);
-        GlUtils.checkError("glUniformMatrix4fv");
+    @SuppressWarnings("WeakerAccess")
+    protected void maybeCreateFramebuffer(int width, int height) {
+        if (mFrameBuffers == null) {
+            mFrameBuffers = new int[1];
+            mFrameBufferTextures = new int[1];
+            GLES20.glGenFramebuffers(1, mFrameBuffers, 0);
+            GLES20.glGenTextures(1, mFrameBufferTextures, 0);
 
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mFrameBufferTextures[0]);
+            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                    width, height, 0, GLES20.GL_RGBA,
+                    GLES20.GL_UNSIGNED_BYTE, null);
+            GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D,
+                    GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D,
+                    GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D,
+                    GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameterf(GLES20.GL_TEXTURE_2D,
+                    GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mFrameBuffers[0]);
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0,
+                    GLES20.GL_TEXTURE_2D, mFrameBufferTextures[0], 0);
+
+            int status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER);
+            if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+                throw new RuntimeException("Invalid framebuffer generation. Error:" + status);
+            }
+
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+        }
+    }
+
+    public void onPreDraw(int textureId, long timestampUs, float[] transformMatrix) {
         // Enable the "aPosition" vertex attribute.
         // Connect vertexBuffer to "aPosition".
         GLES20.glEnableVertexAttribArray(vertexPositionLocation);
@@ -214,18 +255,24 @@ public abstract class BaseFilter implements Filter {
         GLES20.glVertexAttribPointer(vertexTextureCoordinateLocation, 2, GLES20.GL_FLOAT,
                 false, 8, textureCoordinates);
         GlUtils.checkError("glVertexAttribPointer");
+
+        // bind texture
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
+        GLES30.glBindTexture(getTextureType(), textureId);
     }
 
     @SuppressWarnings("WeakerAccess")
-    protected void onDraw(long timestampUs) {
+    public void onDraw(long timestampUs) {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
         GlUtils.checkError("glDrawArrays");
     }
 
     @SuppressWarnings("WeakerAccess")
-    protected void onPostDraw(long timestampUs) {
+    public void onPostDraw(long timestampUs) {
         GLES20.glDisableVertexAttribArray(vertexPositionLocation);
         GLES20.glDisableVertexAttribArray(vertexTextureCoordinateLocation);
+        GLES30.glBindTexture(getTextureType(), 0);
+        GLES30.glUseProgram(0);
     }
 
     @NonNull
@@ -252,5 +299,15 @@ public abstract class BaseFilter implements Filter {
         } catch (InstantiationException e) {
             throw new RuntimeException("Filters should have a public no-arguments constructor.", e);
         }
+    }
+
+    /**
+     * texture type, default: GL_TEXTURE_2D
+     * only OESInputOutputFilter is a special type
+     *
+     * @return
+     */
+    protected int getTextureType() {
+        return GLES20.GL_TEXTURE_2D;
     }
 }
